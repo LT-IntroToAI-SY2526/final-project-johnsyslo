@@ -1,23 +1,34 @@
-import re, string, calendar, requests, time
-from wikipedia import WikipediaPage
+import calendar
+import re
+import string
+import time
+from typing import Any, Callable, List, Match, Tuple
+
+import requests
 import wikipedia
 from bs4 import BeautifulSoup
+from wikipedia import WikipediaPage
+
 from match import match
-from typing import List, Callable, Tuple, Any, Match
 
 
 def get_page_html(title: str) -> str:
     search_response = requests.get(
         "https://en.wikipedia.org/w/api.php",
-        params={"action": "query", "list": "search", "srsearch": title, "format": "json"},
+        params={
+            "action": "query",
+            "list": "search",
+            "srsearch": title,
+            "format": "json",
+        },
         headers={"User-Agent": "Wikipedia-Let-Me-Through/1.0"},
-        timeout=10
+        timeout=10,
     )
     results = search_response.json().get("query", {}).get("search", [])
     if results:
         title = results[0]["title"]  # use the top search result title
         print(f"Searching Wikipedia for: {title}")
-    
+
     for attempt in range(5):
         response = requests.get(
             "https://en.wikipedia.org/w/api.php",
@@ -28,7 +39,7 @@ def get_page_html(title: str) -> str:
                 "format": "json",
                 "redirects": True,
             },
-            headers={"User-Agent": "intro-ai-class/1.0"}
+            headers={"User-Agent": "intro-ai-class/1.0"},
         )
         if response.status_code == 429:
             wait = int(response.headers.get("Retry-After", 5))
@@ -40,7 +51,9 @@ def get_page_html(title: str) -> str:
             if "error" not in data:
                 time.sleep(2)  # polite delay after every successful call
                 return data["parse"]["text"]["*"]
-    raise ConnectionError(f"Could not retrieve Wikipedia page for '{title}' after 5 attempts")
+    raise ConnectionError(
+        f"Could not retrieve Wikipedia page for '{title}' after 5 attempts"
+    )
 
 
 def get_first_infobox_text(html: str) -> str:
@@ -106,6 +119,7 @@ def get_population(country_name: str) -> str:
 
     return match.group("population").strip()
 
+
 def get_capital(country_name: str) -> str:
     infobox_text = clean_text(get_first_infobox_text(get_page_html(country_name)))
     pattern = r"Capital(?:\s*and\s*largest\s*city\s*)?(?P<capital>[A-Z][A-Za-z\s,\.]+?)(?:\d|Largest|Official|Government)"
@@ -113,6 +127,7 @@ def get_capital(country_name: str) -> str:
     match = get_match(infobox_text, pattern, error_text)
 
     return match.group("capital").strip()
+
 
 def get_currency(country_name: str) -> str:
     infobox_text = clean_text(get_first_infobox_text(get_page_html(country_name)))
@@ -124,14 +139,15 @@ def get_currency(country_name: str) -> str:
 
 def get_language(country_name: str) -> str:
     infobox_text = clean_text(get_first_infobox_text(get_page_html(country_name)))
-    pattern = pattern_language = r"Official\s+language(?:s)?(?:and\s+national\s+language)?\s*(?P<language>[A-Z][A-Za-z\s,]+?)(?:\(|\[|\d|National|Regional|Ethnic|Religion)"
+    pattern = r"Official\s+language(?:s)?(?:.*?language)?\s*(?:\[\d+\])*\s*(?P<language>[A-Z][A-Za-z\s,]+?)(?:\(|\[|\d|National|Regional|Ethnic|Religion|Recognised|\n)"
     error_text = "Page infobox has no official language information"
     match = get_match(infobox_text, pattern, error_text)
     return match.group("language").strip()
 
+
 def get_area(country_name: str) -> str:
     infobox_text = clean_text(get_first_infobox_text(get_page_html(country_name)))
-    pattern = r"Area\s+Total\s*(?:area)?\s*(?P<area>[\d,]+(?:\.\d+)?)(?:\[\d+\])*\s*(?:km2|sq\s+mi|sq|km)?"
+    pattern = r"Area\s*(?:Total\s+area|Total|Incl\.\s+[A-Za-z\s,\.]+|Excl\.\s+[A-Za-z\s,\.]+)?\s*(?P<area>[\d,]+(?:\.\d+)?)"
     error_text = "Page infobox has no area information"
     match = get_match(infobox_text, pattern, error_text)
     return match.group("area").strip()
@@ -153,9 +169,34 @@ def get_tld(country_name: str) -> str:
     return match.group("tld").strip()
 
 
+def get_motto(country_name: str) -> str:
+    infobox_text = clean_text(get_first_infobox_text(get_page_html(country_name)))
+    pattern = r"Motto:\s*(?P<motto>\".+?\")"
+    error_text = "Page infobox has no motto information"
+    match = get_match(infobox_text, pattern, error_text)
+    return match.group("motto").strip()
+
+
+def get_government(country_name: str) -> str:
+    infobox_text = clean_text(get_first_infobox_text(get_page_html(country_name)))
+    pattern = r"Government\s*(?P<gov>.+?)\s*(?:\[\d+\]|\bPresident\b|\bPrime\b|\bKing\b|\bQueen\b|\bChancellor\b|\n)"
+    error_text = "Page infobox has no government information"
+    match = get_match(infobox_text, pattern, error_text)
+    return match.group("gov").strip()
+
+
+def get_time_zone(country_name: str) -> str:
+    infobox_text = clean_text(get_first_infobox_text(get_page_html(country_name)))
+    pattern = r"Time\s+zone\s*(?P<tz>UTC[\d\s\:\+\-\–to]+)"
+    error_text = "Page infobox has no time zone information"
+    match = get_match(infobox_text, pattern, error_text)
+    return match.group("tz").strip()
+
+
 # below are a set of actions. Each takes a list argument and returns a list of answers
 # according to the action and the argument. It is important that each function returns a
 # list of the answer(s) and not just the answer itself.
+
 
 def capital(matches: List[str]) -> List[str]:
     try:
@@ -163,11 +204,13 @@ def capital(matches: List[str]) -> List[str]:
     except Exception as e:
         return [f"Sorry, I couldn't process the capital: {str(e)}"]
 
+
 def population(matches: List[str]) -> List[str]:
     try:
         return [get_population(" ".join(matches))]
     except Exception as e:
         return [f"Sorry, I couldn't process the population: {str(e)}"]
+
 
 def currency(matches: List[str]) -> List[str]:
     try:
@@ -175,11 +218,13 @@ def currency(matches: List[str]) -> List[str]:
     except Exception as e:
         return [f"Sorry, I couldn't process the currency: {str(e)}"]
 
+
 def language(matches: List[str]) -> List[str]:
     try:
         return [get_language(" ".join(matches))]
     except Exception as e:
         return [f"Sorry, I couldn't process the language: {str(e)}"]
+
 
 def area(matches: List[str]) -> List[str]:
     try:
@@ -187,17 +232,41 @@ def area(matches: List[str]) -> List[str]:
     except Exception as e:
         return [f"Sorry, I couldn't process the area: {str(e)}"]
 
+
 def calling_code(matches: List[str]) -> List[str]:
     try:
         return [get_calling_code(" ".join(matches))]
     except Exception as e:
         return [f"Sorry, I couldn't process the calling code: {str(e)}"]
 
+
 def tld(matches: List[str]) -> List[str]:
     try:
         return [get_tld(" ".join(matches))]
     except Exception as e:
         return [f"Sorry, I couldn't process the internet domain TLD: {str(e)}"]
+
+
+def motto(matches: List[str]) -> List[str]:
+    try:
+        return [get_motto(" ".join(matches))]
+    except Exception as e:
+        return [f"Sorry, I couldn't process the motto: {str(e)}"]
+
+
+def government(matches: List[str]) -> List[str]:
+    try:
+        return [get_government(" ".join(matches))]
+    except Exception as e:
+        return [f"Sorry, I couldn't process the government type: {str(e)}"]
+
+
+def time_zone(matches: List[str]) -> List[str]:
+    try:
+        return [get_time_zone(" ".join(matches))]
+    except Exception as e:
+        return [f"Sorry, I couldn't process the time zone: {str(e)}"]
+
 
 # dummy argument is ignored and doesn't matter
 def bye_action(dummy: List[str]) -> None:
@@ -219,6 +288,9 @@ pa_list: List[Tuple[Pattern, Action]] = [
     ("what is the total area of %".split(), area),
     ("what is the calling code for %".split(), calling_code),
     ("what is the internet tld for %".split(), tld),
+    ("what is the motto of %".split(), motto),
+    ("what is the government type of %".split(), government),
+    ("what is the time zone of %".split(), time_zone),
     (["bye"], bye_action),
 ]
 
